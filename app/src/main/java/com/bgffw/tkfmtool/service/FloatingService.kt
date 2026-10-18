@@ -24,6 +24,7 @@ import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import com.bgffw.tkfmtool.BuildConfig
 import com.bgffw.tkfmtool.MainActivity
 import com.bgffw.tkfmtool.R
 import com.bgffw.tkfmtool.capture.ScreenCapture
@@ -461,6 +462,7 @@ class FloatingService : Service() {
                 val cropHeight = bitmapRect.height.coerceAtMost(bitmap.height - top).coerceAtLeast(1)
 
                 val crop = Bitmap.createBitmap(bitmap, left, top, cropWidth, cropHeight)
+                dumpDebugImage(crop, "tag_region.png")
 
                 // 精准模型：把裁剪图放大一倍再识别，让笔画之间的间隙更清楚；
                 // 快速模型：原尺寸直送。见 ACCURATE_MODEL_SCALE 的注释。
@@ -520,6 +522,26 @@ class FloatingService : Service() {
         return Bitmap.createScaledBitmap(source, width, height, true)
     }
 
+    /**
+     * 把裁剪出来的区域落盘，用于排查「区域裁错 / 坐标偏了」这类问题。
+     *
+     * 只在 debug 包写文件，位置：
+     * `/sdcard/Android/data/com.bgffw.tkfmtool.debug/files/debug/`
+     * 取回：`adb pull /sdcard/Android/data/com.bgffw.tkfmtool.debug/files/debug/`
+     */
+    private fun dumpDebugImage(bitmap: Bitmap, name: String) {
+        if (!BuildConfig.DEBUG) return
+        try {
+            val dir = getExternalFilesDir("debug") ?: return
+            if (!dir.exists() && !dir.mkdirs()) return
+            java.io.File(dir, name).outputStream().use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "dump $name failed", t)
+        }
+    }
+
     // ---------------------------------------------------------------- 招募时间
 
     /**
@@ -542,35 +564,62 @@ class FloatingService : Service() {
 
         val startedAt = SystemClock.elapsedRealtime()
         var firstSeenAt = -1L
+        var lastValue: String? = null
+        var stuckCount = 0
+        var missCount = 0
+        var round = 0
+        var tapCount = 0
 
-        Log.d(TAG, "adjust recruit time start, target=$target")
+        Log.d(TAG, "adjust recruit time start, target=$target tap=($tapX,$tapY)")
 
         while (true) {
             val now = SystemClock.elapsedRealtime()
             if (firstSeenAt < 0) {
                 if (now - startedAt > TIME_WAIT_TIMEOUT_MS) {
-                    Log.d(TAG, "recruit time panel never appeared, give up")
+                    Log.d(TAG, "recruit time panel never appeared (unreadable=$missCount)")
                     return
                 }
             } else if (now - firstSeenAt > TIME_ADJUST_TIMEOUT_MS) {
-                Log.d(TAG, "adjust recruit time timeout, target=$target")
+                Log.d(
+                    TAG,
+                    "adjust recruit time timeout, last=$lastValue target=$target taps=$tapCount"
+                )
                 return
             }
 
+            round++
             val current = readRecruitTime(screenCapture, mapper)
+
             if (current == null) {
+                missCount++
+                // 每 5 次打一条，避免刷屏但能看出是不是一直读不到
+                if (missCount % 5 == 1) {
+                    Log.d(TAG, "recruit time unreadable (#$missCount)")
+                }
                 delay(TIME_RETRY_DELAY_MS)
                 continue
             }
 
             if (firstSeenAt < 0) firstSeenAt = SystemClock.elapsedRealtime()
             if (current == target) {
-                Log.d(TAG, "recruit time already at $target")
+                Log.d(TAG, "recruit time reached $target in $round rounds, taps=$tapCount")
                 return
             }
 
-            Log.d(TAG, "recruit time $current -> tapping toward $target")
+            stuckCount = if (current == lastValue) stuckCount + 1 else 0
+            lastValue = current
+
+            if (stuckCount >= 3) {
+                Log.w(
+                    TAG,
+                    "value stuck at $current after $stuckCount taps; " +
+                        "tap point ($tapX,$tapY) may be wrong for this resolution"
+                )
+            }
+
+            Log.d(TAG, "round#$round current=$current target=$target stuck=$stuckCount")
             Clicker.tap(tapX, tapY, Clicker.DEFAULT_PRESS_MS)
+            tapCount++
             delay(TIME_AFTER_TAP_DELAY_MS)
         }
     }
@@ -588,6 +637,7 @@ class FloatingService : Service() {
             val height = bitmapRect.height.coerceAtMost(bitmap.height - top).coerceAtLeast(1)
 
             val crop = Bitmap.createBitmap(bitmap, left, top, width, height)
+            dumpDebugImage(crop, "time_region.png")
             val blocks = try {
                 ocr.recognize(crop)
             } finally {
@@ -716,7 +766,7 @@ class FloatingService : Service() {
         private const val TIME_WAIT_TIMEOUT_MS = 12_000L      // 等「招募时间」界面出现
         private const val TIME_ADJUST_TIMEOUT_MS = 20_000L    // 界面已出现后允许调整的时长
         private const val TIME_RETRY_DELAY_MS = 300L          // 还没读到数字时的重试间隔
-        private const val TIME_AFTER_TAP_DELAY_MS = 350L      // 点一下之后等界面刷新的时间
+        private const val TIME_AFTER_TAP_DELAY_MS = 500L      // 点一下之后等界面刷新的时间
         private const val TIME_PICK_SETTLE_MS = 600L          // 选完词条到时间页出现的缓冲
         private const val TIME_CAPTURE_TIMEOUT_MS = 800L      // 单次截图取帧超时
 

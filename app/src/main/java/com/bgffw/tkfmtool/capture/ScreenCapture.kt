@@ -29,6 +29,10 @@ class ScreenCapture(private val context: Context) {
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
 
+    /** 最近一次成功解码的整屏帧；屏幕静止时靠它兜底。 */
+    private var latestFrame: Bitmap? = null
+    private val frameLock = Any()
+
     var width: Int = 0
         private set
 
@@ -92,33 +96,66 @@ class ScreenCapture(private val context: Context) {
     }
 
     /** 取最新一帧；超时或通道未就绪返回 null。 */
+    /**
+     * 取一帧当前画面。
+     *
+     * 关键点：`ImageReader` 只在屏幕内容变化时才会产出新帧。原实现每次都
+     * `acquireLatestImage()` 并 `close()`，等于把缓冲消费掉——界面一静止
+     * 下一次就取不到，调用方拿到 null，看起来就是「点一下之后就没反应」。
+     *
+     * 现在保留一份最新帧缓存：优先等新帧（最多 [STALE_FRAME_WAIT_MS]），
+     * 等不到就回退用缓存。返回的始终是缓存的**副本**，调用方可以放心 recycle。
+     */
     fun capture(timeoutMs: Long = 2_000L): Bitmap? {
-        val reader = imageReader ?: return null
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
-        var image: Image? = null
+        val reader = imageReader
+        if (reader != null) {
+            val waitBudget = if (timeoutMs <= 0) 0L else minOf(timeoutMs, STALE_FRAME_WAIT_MS)
+            val deadline = SystemClock.elapsedRealtime() + waitBudget
 
-        while (SystemClock.elapsedRealtime() < deadline) {
-            image = try {
-                reader.acquireLatestImage()
-            } catch (t: Throwable) {
-                null
-            }
-            if (image != null) break
-            try {
-                Thread.sleep(40L)
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
-                return null
+            while (true) {
+                val image = try {
+                    reader.acquireLatestImage()
+                } catch (t: Throwable) {
+                    null
+                }
+
+                if (image != null) {
+                    try {
+                        val fresh = toBitmap(image)
+                        if (fresh != null) {
+                            val copy: Bitmap?
+                            synchronized(frameLock) {
+                                latestFrame?.let { runCatching { it.recycle() } }
+                                latestFrame = fresh
+                                copy = copyOf(fresh)
+                            }
+                            if (copy != null) return copy
+                        }
+                    } finally {
+                        runCatching { image.close() }
+                    }
+                }
+
+                if (SystemClock.elapsedRealtime() >= deadline) break
+                try {
+                    Thread.sleep(30L)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                }
             }
         }
 
-        val frame = image ?: return null
+        // 没有新帧：回退到上一帧。界面静止时这依然是正确的画面。
+        return synchronized(frameLock) { copyOf(latestFrame) }
+    }
+
+    private fun copyOf(source: Bitmap?): Bitmap? {
+        if (source == null) return null
         return try {
-            toBitmap(frame)
+            if (source.isRecycled) null else Bitmap.createBitmap(source)
         } catch (t: Throwable) {
             null
-        } finally {
-            runCatching { frame.close() }
         }
     }
 
@@ -128,6 +165,11 @@ class ScreenCapture(private val context: Context) {
 
         runCatching { imageReader?.close() }
         imageReader = null
+
+        synchronized(frameLock) {
+            latestFrame?.let { runCatching { it.recycle() } }
+            latestFrame = null
+        }
 
         runCatching { projection?.stop() }
         projection = null
@@ -155,6 +197,9 @@ class ScreenCapture(private val context: Context) {
     }
 
     companion object {
+
+        /** 等新帧的最长时间；超过就用缓存帧。 */
+        private const val STALE_FRAME_WAIT_MS = 250L
 
         fun screenSize(context: Context): Pair<Int, Int> {
             val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
