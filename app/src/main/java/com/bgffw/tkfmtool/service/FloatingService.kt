@@ -91,6 +91,9 @@ class FloatingService : Service() {
     @Volatile
     private var lastEntries: List<TagEntry> = emptyList()
 
+    /** 招募时间区域 OCR 原始内容的打印配额，避免每轮刷屏。 */
+    private var timeOcrLogs = 0
+
     // 悬浮按钮的拖拽 / 长按状态
     private var downRawX = 0f
     private var downRawY = 0f
@@ -396,6 +399,11 @@ class FloatingService : Service() {
             if (best == null) {
                 showHint(getString(R.string.toast_no_match))
             } else {
+                // 开关没开的话，自动流程只会选人不会拨时间，先明确提示一次，
+                // 否则看起来就像「功能失效」。
+                if (!settings.autoSetTime) {
+                    showHint(getString(R.string.hint_auto_time_off))
+                }
                 startAutoFlow(best, entries)
             }
         }
@@ -438,11 +446,23 @@ class FloatingService : Service() {
         val autoTime = settings.autoSetTime
         val sureSr = TagMatcher.isSureSR(matcher)
 
+        Log.d(
+            TAG,
+            "autoFlow start: tags=${matcher.tags} sureSr=$sureSr autoSetTime=$autoTime " +
+                "target=${if (sureSr) settings.haveSrTime else settings.noneSrTime} " +
+                "captureReady=${capture != null} a11y=${Clicker.isAvailable()} " +
+                "entries=${entries.size}"
+        )
+
         autoFlowJob = scope.launch {
             clickTags(matcher.tags, entries)
-            if (!autoTime) return@launch
+            if (!autoTime) {
+                Log.d(TAG, "autoFlow: auto-set-time is off, skip")
+                return@launch
+            }
             delay(TIME_PICK_SETTLE_MS)
             applyRecruitTime(sureSr)
+            Log.d(TAG, "autoFlow finished")
         }
     }
 
@@ -565,12 +585,20 @@ class FloatingService : Service() {
     private suspend fun applyRecruitTime(haveSr: Boolean) {
         val targetText = if (haveSr) settings.haveSrTime else settings.noneSrTime
         val target = RecruitTimeCycle.parseHour(targetText)
+        Log.d(TAG, "applyRecruitTime: haveSr=$haveSr targetText=$targetText target=$target")
+
         if (target == null) {
-            Log.w(TAG, "invalid recruit time target: $targetText")
+            Log.w(TAG, "applyRecruitTime: invalid target '$targetText'")
             return
         }
 
-        val screenCapture = capture ?: return
+        val screenCapture = capture
+        if (screenCapture == null) {
+            Log.w(TAG, "applyRecruitTime: screen capture not ready")
+            return
+        }
+
+        timeOcrLogs = 0
         val mapper = Geometry.Mapper(screenWidth, screenHeight)
         val tapX = mapper.timeButtonX()
         val tapY = mapper.timeButtonY()
@@ -659,6 +687,12 @@ class FloatingService : Service() {
                 ocr.recognize(crop)
             } finally {
                 runCatching { crop.recycle() }
+            }
+
+            // 前几次把原始识别内容打出来，用于区分「没截到」和「读错格式」
+            if (timeOcrLogs < TIME_OCR_LOG_LIMIT) {
+                timeOcrLogs++
+                Log.d(TAG, "time ocr #$timeOcrLogs: " + blocks.joinToString(" | ") { it.text })
             }
 
             RecruitTimeParser.parse(blocks)
@@ -787,6 +821,7 @@ class FloatingService : Service() {
         private const val TIME_PICK_SETTLE_MS = 600L          // 选完词条到时间页出现的缓冲
         private const val TIME_CAPTURE_TIMEOUT_MS = 800L      // 单次截图取帧超时
         private const val MAX_ADJUST_ROUNDS = 3               // 一次调整最多重试几轮
+        private const val TIME_OCR_LOG_LIMIT = 5              // 原始 OCR 内容最多打几条
 
         @Volatile
         var instance: FloatingService? = null

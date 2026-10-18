@@ -90,6 +90,7 @@
     <string name="toast_capture_failed">截图失败</string>
     <string name="toast_ocr_empty">识图失败，请重试</string>
     <string name="toast_no_match">没有匹配到任何角色</string>
+    <string name="hint_auto_time_off">自动设置招募时间未开启（长按悬浮按钮 → 设置 → 自动设置招募时间开关）</string>
     <string name="toast_accessibility_off">无障碍服务未开启，无法点击</string>
     <string name="toast_capture_not_ready">截图通道尚未就绪</string>
 </resources>
