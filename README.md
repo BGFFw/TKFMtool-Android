@@ -72,7 +72,10 @@ $env:GRADLE_USER_HOME='F:\Area\.gradle'
 3. 组装 debug APK，并用 `apksigner` 校验签名
 4. 把 APK 与测试报告上传到该次运行的 Artifacts
 
-打 `v*` 标签时会额外创建一个 GitHub Release 并附上 APK。
+打 `v*` 标签时会额外创建一个 GitHub Release，并把 APK 以 `TKFMtool-<tag>-debug.apk` 的名字附上去。所以安装包有两个来源：
+
+* 稳定版：<https://github.com/BGFFw/TKFMtool-Android/releases>
+* 每次提交的最新构建：对应那次 Actions 运行页面底部的 Artifacts
 
 ### 关于签名
 
