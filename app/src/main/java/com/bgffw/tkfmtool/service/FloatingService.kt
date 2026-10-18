@@ -35,6 +35,7 @@ import com.bgffw.tkfmtool.core.Geometry
 import com.bgffw.tkfmtool.core.MlKitOcrEngine
 import com.bgffw.tkfmtool.core.OcrEngine
 import com.bgffw.tkfmtool.core.OcrText
+import com.bgffw.tkfmtool.core.RecruitTimeCycle
 import com.bgffw.tkfmtool.core.RecruitTimeParser
 import com.bgffw.tkfmtool.core.SettingsRepository
 import com.bgffw.tkfmtool.core.TagEntry
@@ -430,7 +431,9 @@ class FloatingService : Service() {
      * 这里改成串行，并且加了重入保护——连点悬浮按钮时不会叠出两套点击。
      */
     private fun startAutoFlow(matcher: TagMatcher, entries: List<TagEntry>) {
-        if (autoFlowJob?.isActive == true) return
+        // 用户又点了一行，就以新的为准：取消上一次可能还在跑的自动流程。
+        // 之前这里是直接 return，导致「上一次还没跑完时点行没反应」。
+        autoFlowJob?.cancel()
 
         val autoTime = settings.autoSetTime
         val sureSr = TagMatcher.isSureSR(matcher)
@@ -548,80 +551,94 @@ class FloatingService : Service() {
      * 把招募时间拨到设定值。
      *
      * 原版是裸的 `while (读值 != 目标) { 点一下; sleep(1000) }`，靠 10 秒定时器兜底中断。
-     * 那套节奏在 AutoX 的 PaddleOCR 上够用，本工程每轮要「截图 + ML Kit 识别」，
-     * 一圈就要一两秒，10 秒只够点两三次，于是经常停在中间值。
+     * 本工程每轮要「截图 + ML Kit 识别」，一圈一两秒，逐次判断太慢也容易被打断。
      *
-     * 这里改成两段式预算：
-     * * 还没读到数字时（界面没切过来），用较短的间隔快速轮询，最多等 [TIME_WAIT_TIMEOUT_MS]；
-     * * 一旦读到数字，进入调整阶段，每次点击后短暂等待再重读，最多 [TIME_ADJUST_TIMEOUT_MS]。
+     * 游戏里的小时数是 `01 → 09 → 08 → … → 01` 递减循环（见 [RecruitTimeCycle]），
+     * 规律固定，所以这里改成：
+     *
+     * 1. 等界面出现，读一次当前小时数；
+     * 2. 用 `tapsBetween(cur, target)` 算出还差几下，一次性点完；
+     * 3. 读一次确认，没到位再补一轮（最多 [MAX_ADJUST_ROUNDS] 轮）。
+     *
+     * 这样一次调整通常只有一次识别，不会因为中途某次 OCR 失败就卡住。
      */
     private suspend fun applyRecruitTime(haveSr: Boolean) {
-        val target = if (haveSr) settings.haveSrTime else settings.noneSrTime
+        val targetText = if (haveSr) settings.haveSrTime else settings.noneSrTime
+        val target = RecruitTimeCycle.parseHour(targetText)
+        if (target == null) {
+            Log.w(TAG, "invalid recruit time target: $targetText")
+            return
+        }
+
         val screenCapture = capture ?: return
         val mapper = Geometry.Mapper(screenWidth, screenHeight)
         val tapX = mapper.timeButtonX()
         val tapY = mapper.timeButtonY()
 
-        val startedAt = SystemClock.elapsedRealtime()
-        var firstSeenAt = -1L
-        var lastValue: String? = null
-        var stuckCount = 0
-        var missCount = 0
+        val current = awaitRecruitTime(screenCapture, mapper) ?: run {
+            Log.d(TAG, "recruit time panel not found within ${TIME_WAIT_TIMEOUT_MS}ms")
+            return
+        }
+
+        Log.d(TAG, "recruit time start: current=$current target=$target tap=($tapX,$tapY)")
+
+        var hour = current
         var round = 0
-        var tapCount = 0
 
-        Log.d(TAG, "adjust recruit time start, target=$target tap=($tapX,$tapY)")
-
-        while (true) {
-            val now = SystemClock.elapsedRealtime()
-            if (firstSeenAt < 0) {
-                if (now - startedAt > TIME_WAIT_TIMEOUT_MS) {
-                    Log.d(TAG, "recruit time panel never appeared (unreadable=$missCount)")
-                    return
-                }
-            } else if (now - firstSeenAt > TIME_ADJUST_TIMEOUT_MS) {
-                Log.d(
-                    TAG,
-                    "adjust recruit time timeout, last=$lastValue target=$target taps=$tapCount"
-                )
+        while (round < MAX_ADJUST_ROUNDS) {
+            // 01 → 09 → 08 → … → 01 递减循环，读一次就能算出还差几下
+            val taps = RecruitTimeCycle.tapsBetween(hour, target)
+            if (taps <= 0) {
+                Log.d(TAG, "recruit time already at $target")
                 return
             }
 
             round++
-            val current = readRecruitTime(screenCapture, mapper)
+            Log.d(TAG, "round#$round hour=$hour target=$target taps=$taps")
 
-            if (current == null) {
-                missCount++
-                // 每 5 次打一条，避免刷屏但能看出是不是一直读不到
-                if (missCount % 5 == 1) {
-                    Log.d(TAG, "recruit time unreadable (#$missCount)")
-                }
-                delay(TIME_RETRY_DELAY_MS)
-                continue
+            repeat(taps) {
+                Clicker.tap(tapX, tapY, Clicker.DEFAULT_PRESS_MS)
+                delay(TIME_TAP_INTERVAL_MS)
             }
 
-            if (firstSeenAt < 0) firstSeenAt = SystemClock.elapsedRealtime()
-            if (current == target) {
-                Log.d(TAG, "recruit time reached $target in $round rounds, taps=$tapCount")
+            delay(TIME_TAPS_SETTLE_MS)
+
+            val probe = readRecruitTime(screenCapture, mapper)
+            val probedHour = RecruitTimeCycle.parseHour(probe)
+            if (probedHour == null) {
+                Log.d(TAG, "recruit time unreadable after $taps taps")
                 return
             }
-
-            stuckCount = if (current == lastValue) stuckCount + 1 else 0
-            lastValue = current
-
-            if (stuckCount >= 3) {
-                Log.w(
-                    TAG,
-                    "value stuck at $current after $stuckCount taps; " +
-                        "tap point ($tapX,$tapY) may be wrong for this resolution"
-                )
+            hour = probedHour
+            if (hour == target) {
+                Log.d(TAG, "recruit time reached $target in $round round(s)")
+                return
             }
-
-            Log.d(TAG, "round#$round current=$current target=$target stuck=$stuckCount")
-            Clicker.tap(tapX, tapY, Clicker.DEFAULT_PRESS_MS)
-            tapCount++
-            delay(TIME_AFTER_TAP_DELAY_MS)
+            Log.d(TAG, "recruit time after $taps taps is $hour, retrying")
         }
+
+        Log.w(
+            TAG,
+            "recruit time not reached: final=$hour target=$target after $round round(s); " +
+                "if this repeats, tap point ($tapX,$tapY) may not be the minus-hour button"
+        )
+    }
+
+    /** 等「招募时间」界面出现并读出一次小时数。 */
+    private suspend fun awaitRecruitTime(
+        screenCapture: ScreenCapture,
+        mapper: Geometry.Mapper
+    ): Int? {
+        val deadline = SystemClock.elapsedRealtime() + TIME_WAIT_TIMEOUT_MS
+        var misses = 0
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val hour = RecruitTimeCycle.parseHour(readRecruitTime(screenCapture, mapper))
+            if (hour != null) return hour
+            misses++
+            if (misses % 6 == 1) Log.d(TAG, "waiting for recruit time panel (#$misses)")
+            delay(TIME_RETRY_DELAY_MS)
+        }
+        return null
     }
 
     private suspend fun readRecruitTime(
@@ -764,11 +781,12 @@ class FloatingService : Service() {
 
         // 招募时间调节的节奏参数
         private const val TIME_WAIT_TIMEOUT_MS = 12_000L      // 等「招募时间」界面出现
-        private const val TIME_ADJUST_TIMEOUT_MS = 20_000L    // 界面已出现后允许调整的时长
         private const val TIME_RETRY_DELAY_MS = 300L          // 还没读到数字时的重试间隔
-        private const val TIME_AFTER_TAP_DELAY_MS = 500L      // 点一下之后等界面刷新的时间
+        private const val TIME_TAP_INTERVAL_MS = 120L         // 连续点击减号之间的间隔
+        private const val TIME_TAPS_SETTLE_MS = 400L          // 点完一轮后等界面刷新
         private const val TIME_PICK_SETTLE_MS = 600L          // 选完词条到时间页出现的缓冲
         private const val TIME_CAPTURE_TIMEOUT_MS = 800L      // 单次截图取帧超时
+        private const val MAX_ADJUST_ROUNDS = 3               // 一次调整最多重试几轮
 
         @Volatile
         var instance: FloatingService? = null
