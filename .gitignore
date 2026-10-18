@@ -16,6 +16,9 @@ dist/
 *.keystore
 *.jks
 
+# 仓库里固定用于签名的 debug key 必须入库，保证本地与 CI 签名一致
+!app/signing/debug.keystore
+
 # 系统
 .DS_Store
 Thumbs.db

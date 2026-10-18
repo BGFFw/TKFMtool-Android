@@ -11,14 +11,37 @@ android {
         applicationId = "com.bgffw.tkfmtool"
         minSdk = 24
         targetSdk = 35
-        versionCode = 4
-        versionName = "2.0.2"
+        versionCode = 5
+        versionName = "2.0.3"
+    }
+
+    /**
+     * 仓库内固定一份签名（Android SDK 的标准 debug 证书）。
+     *
+     * 目的：让本地构建和 GitHub Actions 构建出来的 APK 签名完全一致，
+     * 这样已经装在手机上的旧版本可以直接覆盖升级，不会因为签名变化要求卸载重装。
+     * 仅用于个人工具，不作为商店发布签名。
+     */
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("signing/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+        create("release") {
+            storeFile = file("signing/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            signingConfig = signingConfigs.getByName("debug")
         }
         release {
             isMinifyEnabled = false
@@ -27,6 +50,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

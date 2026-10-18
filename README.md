@@ -1,5 +1,7 @@
 # TKFMtool —— 天下布魔 · 全境征才小助手（原生 Android）
 
+[![Android CI](https://github.com/BGFFw/TKFMtool-Android/actions/workflows/android.yml/badge.svg)](https://github.com/BGFFw/TKFMtool-Android/actions/workflows/android.yml)
+
 原生 Android（Kotlin）重写版，独立仓库。**不再依赖 AutoX.js**：悬浮窗、截图、识图、点击全部由本 APK 自己完成。
 
 > 旧的 AutoX.js 脚本在本仓库已不再维护，源码见 <https://github.com/BGFFw/TKFMtool>。
@@ -60,6 +62,23 @@ $env:GRADLE_USER_HOME='F:\Area\.gradle'
 产物：`app/build/outputs/apk/debug/app-debug.apk`
 
 仓库已带 Gradle Wrapper（`gradle-8.11.1`），Android Studio 直接 Open 工程根目录即可。
+
+### 自动构建（GitHub Actions）
+
+`.github/workflows/android.yml` 会在 push 到 `main`、提 PR、或手动触发时自动执行：
+
+1. 装 JDK 17 与 Android SDK（platform 35 / build-tools 34.0.0）
+2. 跑全部单元测试
+3. 组装 debug APK，并用 `apksigner` 校验签名
+4. 把 APK 与测试报告上传到该次运行的 Artifacts
+
+打 `v*` 标签时会额外创建一个 GitHub Release 并附上 APK。
+
+### 关于签名
+
+`app/signing/debug.keystore` 是入库的固定签名（Android SDK 标准 debug 证书），本地构建和 CI 构建都用它。这样产出的 APK 签名一致，手机上已安装的旧版本可以直接覆盖升级，不会因签名变化要求卸载重装。
+
+这个证书只用于个人工具的分发，不作为商店发布签名。
 
 ## 工程结构
 
