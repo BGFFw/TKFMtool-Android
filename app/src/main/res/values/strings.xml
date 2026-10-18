@@ -74,8 +74,8 @@
     <string name="time_none_sr">非必出SR及以上词条招募时间</string>
     <string name="time_have_sr">必出SR及以上词条招募时间</string>
 
-    <string name="ocr_accurate">精准模型</string>
-    <string name="ocr_fast">快速模型</string>
+    <string name="ocr_accurate">精准模型（2 倍放大后识别，更准、更慢）</string>
+    <string name="ocr_fast">快速模型（原尺寸识别，更快）</string>
 
     <string name="about_message">本程序由 BGFF 制作，原生 Android 重写版。\n如有任何问题请发送邮件反馈。\n邮箱：jinkentu19650215@163.com\nGithub：https://github.com/BGFFw/TKFMtool</string>
 

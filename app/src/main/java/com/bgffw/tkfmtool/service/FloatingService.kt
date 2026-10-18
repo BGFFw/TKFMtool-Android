@@ -461,14 +461,30 @@ class FloatingService : Service() {
                 val cropHeight = bitmapRect.height.coerceAtMost(bitmap.height - top).coerceAtLeast(1)
 
                 val crop = Bitmap.createBitmap(bitmap, left, top, cropWidth, cropHeight)
-                val input = if (settings.ocrAccurate) crop else downscale(crop, FAST_MODEL_SCALE)
 
+                // 精准模型：把裁剪图放大一倍再识别，让笔画之间的间隙更清楚；
+                // 快速模型：原尺寸直送。见 ACCURATE_MODEL_SCALE 的注释。
+                val input = rescale(
+                    crop,
+                    if (settings.ocrAccurate) ACCURATE_MODEL_SCALE else 1f
+                )
+                val inputWidth = input.width
+                val inputHeight = input.height
+
+                val ocrStartedAt = SystemClock.elapsedRealtime()
                 val blocks = try {
                     ocr.recognize(input)
                 } finally {
                     if (input !== crop) runCatching { input.recycle() }
                     if (crop !== bitmap) runCatching { crop.recycle() }
                 }
+                Log.d(
+                    TAG,
+                    "ocr ${if (settings.ocrAccurate) "accurate" else "fast"} " +
+                        "input=${inputWidth}x${inputHeight} crop=${cropWidth}x$cropHeight " +
+                        "took=${SystemClock.elapsedRealtime() - ocrStartedAt}ms " +
+                        "blocks=${blocks.size}"
+                )
 
                 // OCR 坐标 → 裁剪图坐标 → 屏幕坐标
                 val scaleBack = crop.width.toFloat() / input.width.toFloat()
@@ -496,7 +512,9 @@ class FloatingService : Service() {
             }
         }
 
-    private fun downscale(source: Bitmap, factor: Float): Bitmap {
+    /** 按比例缩放；factor 为 1 时直接返回原图，避免多一次拷贝。 */
+    private fun rescale(source: Bitmap, factor: Float): Bitmap {
+        if (factor == 1f) return source
         val width = (source.width * factor).roundToInt().coerceAtLeast(1)
         val height = (source.height * factor).roundToInt().coerceAtLeast(1)
         return Bitmap.createScaledBitmap(source, width, height, true)
@@ -684,7 +702,15 @@ class FloatingService : Service() {
 
         private const val LONG_PRESS_MS = 500L
         private const val HINT_DURATION_MS = 2_000L
-        private const val FAST_MODEL_SCALE = 0.75f
+
+        /**
+         * 精准模型的输入放大倍数。
+         *
+         * ML Kit 的中文识别器对字高有下限，词条区放大一倍后笔画之间分得更开，
+         * 「闇／間」「妨／防」这类形近字更稳；代价是像素量变 4 倍、耗时上升。
+         * 快速模型不做任何缩放，原尺寸直送。
+         */
+        private const val ACCURATE_MODEL_SCALE = 2f
 
         // 招募时间调节的节奏参数
         private const val TIME_WAIT_TIMEOUT_MS = 12_000L      // 等「招募时间」界面出现
