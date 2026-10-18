@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">全境征才助手</string>
+    <string name="app_subtitle">天下布魔 · 全境征才 · 原生版</string>
+
+    <string name="accessibility_label">全境征才助手 · 自动点击</string>
+    <string name="accessibility_desc">用于在天下布魔的全境征才界面上模拟点击词条与招募时间加减按钮。仅在你手动点击悬浮按钮或开启自动选择时执行点击，不读取其他应用的内容。</string>
+
+    <string name="permission_overlay">悬浮窗权限</string>
+    <string name="permission_accessibility">无障碍服务</string>
+    <string name="permission_notification">通知权限</string>
+
+    <string name="state_granted">已开启</string>
+    <string name="state_denied">未开启</string>
+
+    <string name="btn_start">启动悬浮窗</string>
+    <string name="btn_stop">停止助手</string>
+    <string name="btn_correct">识图结果纠错</string>
+
+    <string name="hint_need_overlay">请先授予悬浮窗权限</string>
+    <string name="hint_no_accessibility">未开启无障碍：可以识图，但无法自动点击或自动改招募时间</string>
+    <string name="hint_capture_denied">未获得屏幕录制授权，已取消启动</string>
+    <string name="hint_running">助手已启动，点悬浮按钮开始识图</string>
+    <string name="hint_stopped">助手已停止</string>
+    <string name="hint_settings_failed">无法打开设置页，请确认已授予悬浮窗权限</string>
+    <string name="hint_need_accessibility_title">无障碍服务未开启</string>
+    <string name="hint_need_accessibility_message">不开无障碍也能识图，但无法自动点击词条、也无法自动调整招募时间。现在去开启吗？</string>
+    <string name="hint_go_settings">去开启</string>
+    <string name="hint_continue_anyway">仍然启动</string>
+
+    <string name="usage_title">使用步骤</string>
+    <string name="usage_body">1. 授予悬浮窗权限（必需）。\n2. 开启无障碍服务（自动点击、自动设置招募时间需要）。\n3. 点击「启动悬浮窗」，在系统弹窗里同意「屏幕录制」。\n4. 打开天下布魔的全境征才界面。\n5. 点悬浮按钮开始识图；长按悬浮按钮打开设置菜单。</string>
+
+    <string name="notice_title">说明</string>
+    <string name="notice_body">屏幕录制授权在每次启动时都需要重新确认，这是 Android 14 及以上系统的限制。识图与点击全部在本机完成，不联网、不上传任何画面。</string>
+
+    <string name="start_button_text">开始识图</string>
+    <string name="start_button_busy">识图ING…</string>
+
+    <string name="panel_title">识图结果</string>
+    <string name="panel_close">关闭</string>
+    <string name="panel_tip">点击任意一行即可按该词条组合自动选择</string>
+    <string name="panel_col_pick">选择</string>
+    <string name="panel_col_match">角色清单</string>
+    <string name="panel_empty">没有匹配到角色</string>
+
+    <string name="correct_title">识图结果纠错</string>
+    <string name="correct_add">新增纠正</string>
+    <string name="correct_input_from">请输入想改正的识图结果</string>
+    <string name="correct_input_to">请输入改正后结果</string>
+    <string name="correct_delete_title">删除纠正项</string>
+    <string name="correct_delete_message">确定要删除 %1$s 吗？</string>
+    <string name="correct_save_failed">保存失败：没收到「改正后结果」</string>
+
+    <string name="settings_title">设置</string>
+    <string name="settings_mode">选择运行模式</string>
+    <string name="settings_mode_title">请选择模式（当前为模式%1$s）</string>
+    <string name="settings_autotime">自动设置招募时间开关</string>
+    <string name="settings_time">招募时间设置</string>
+    <string name="settings_ocr">识图模式</string>
+    <string name="settings_smart_correct">词表智能纠正（把识别结果吸附到已知词条）</string>
+    <string name="settings_correct">识图结果纠错</string>
+    <string name="settings_last">查看上次识图结果（纠正后）</string>
+    <string name="settings_about">关于本程序</string>
+    <string name="settings_exit">关闭程序</string>
+
+    <string name="mode_0">模式一：识图后弹出结果页面</string>
+    <string name="mode_1">模式二：识图后弹出结果页面且自动选择第一个选项</string>
+    <string name="mode_2">模式三：识图后不弹出结果页面且自动选择第一个选项</string>
+
+    <string name="on_off_on">开启</string>
+    <string name="on_off_off">关闭</string>
+
+    <string name="time_none_sr">非必出SR及以上词条招募时间</string>
+    <string name="time_have_sr">必出SR及以上词条招募时间</string>
+
+    <string name="ocr_accurate">精准模型</string>
+    <string name="ocr_fast">快速模型</string>
+
+    <string name="about_message">本程序由 BGFF 制作，原生 Android 重写版。\n如有任何问题请发送邮件反馈。\n邮箱：jinkentu19650215@163.com\nGithub：https://github.com/BGFFw/TKFMtool</string>
+
+    <string name="last_result_empty">还没有识图记录</string>
+    <string name="last_result_body">上一次的结果为：%1$s</string>
+
+    <string name="notif_channel_name">识图服务</string>
+    <string name="notif_title">全境征才助手运行中</string>
+    <string name="notif_text">点悬浮按钮开始识图，长按打开设置</string>
+
+    <string name="toast_error">出错了，请重试</string>
+    <string name="toast_capture_failed">截图失败</string>
+    <string name="toast_ocr_empty">识图失败，请重试</string>
+    <string name="toast_no_match">没有匹配到任何角色</string>
+    <string name="toast_accessibility_off">无障碍服务未开启，无法点击</string>
+    <string name="toast_capture_not_ready">截图通道尚未就绪</string>
+</resources>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand">#1E88E5</color>
+    <color name="brand_dark">#1565C0</color>
+    <color name="bg">#F2F5F9</color>
+    <color name="card">#FFFFFF</color>
+    <color name="text_primary">#1F2933</color>
+    <color name="text_secondary">#6B7A8C</color>
+    <color name="ok">#2E7D32</color>
+    <color name="warn">#E65100</color>
+
+    <color name="panel_bg">#FF07C2FB</color>
+    <color name="panel_header">#FFFFA500</color>
+    <color name="panel_divider">#FFFFFFFF</color>
+    <color name="star3">#FFB8860B</color>
+    <color name="star2">#FFFF0000</color>
+
+    <color name="float_button_bg">#CCFFFFFF</color>
+    <color name="float_button_stroke">#661E88E5</color>
+</resources>
