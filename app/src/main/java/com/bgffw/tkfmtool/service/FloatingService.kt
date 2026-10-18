@@ -34,6 +34,7 @@ import com.bgffw.tkfmtool.core.Geometry
 import com.bgffw.tkfmtool.core.MlKitOcrEngine
 import com.bgffw.tkfmtool.core.OcrEngine
 import com.bgffw.tkfmtool.core.OcrText
+import com.bgffw.tkfmtool.core.RecruitTimeParser
 import com.bgffw.tkfmtool.core.SettingsRepository
 import com.bgffw.tkfmtool.core.TagEntry
 import com.bgffw.tkfmtool.core.TagMatcher
@@ -42,6 +43,7 @@ import com.bgffw.tkfmtool.ui.ResultPanel
 import com.bgffw.tkfmtool.ui.SettingsActivity
 import com.bgffw.tkfmtool.util.dp
 import com.bgffw.tkfmtool.util.overlayWindowType
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -82,7 +84,7 @@ class FloatingService : Service() {
     private var screenHeight = 0
 
     private var working = false
-    private var timeAdjustJob: Job? = null
+    private var autoFlowJob: Job? = null
 
     @Volatile
     private var lastEntries: List<TagEntry> = emptyList()
@@ -146,8 +148,8 @@ class FloatingService : Service() {
         running = false
         instance = null
 
-        timeAdjustJob?.cancel()
-        timeAdjustJob = null
+        autoFlowJob?.cancel()
+        autoFlowJob = null
 
         scope.cancel()
 
@@ -392,14 +394,7 @@ class FloatingService : Service() {
             if (best == null) {
                 showHint(getString(R.string.toast_no_match))
             } else {
-                // 与原版一致：设时间与选词条是两条并行任务
-                if (settings.autoSetTime) {
-                    timeAdjustJob?.cancel()
-                    timeAdjustJob = scope.launch {
-                        applyRecruitTime(TagMatcher.isSureSR(best))
-                    }
-                }
-                scope.launch { clickTags(best.tags, entries) }
+                startAutoFlow(best, entries)
             }
         }
 
@@ -424,12 +419,27 @@ class FloatingService : Service() {
     }
 
     private fun onPickRow(matcher: TagMatcher) {
-        val entries = lastEntries
-        if (settings.autoSetTime) {
-            timeAdjustJob?.cancel()
-            timeAdjustJob = scope.launch { applyRecruitTime(TagMatcher.isSureSR(matcher)) }
+        startAutoFlow(matcher, lastEntries)
+    }
+
+    /**
+     * 自动选择的核心流程：先点词条，等界面切到「招募时间」页，再拨时间。
+     *
+     * 原版把这两步放在两个线程里并行，结果前半段全在等界面、白耗掉时间预算。
+     * 这里改成串行，并且加了重入保护——连点悬浮按钮时不会叠出两套点击。
+     */
+    private fun startAutoFlow(matcher: TagMatcher, entries: List<TagEntry>) {
+        if (autoFlowJob?.isActive == true) return
+
+        val autoTime = settings.autoSetTime
+        val sureSr = TagMatcher.isSureSR(matcher)
+
+        autoFlowJob = scope.launch {
+            clickTags(matcher.tags, entries)
+            if (!autoTime) return@launch
+            delay(TIME_PICK_SETTLE_MS)
+            applyRecruitTime(sureSr)
         }
-        scope.launch { clickTags(matcher.tags, entries) }
     }
 
     // ---------------------------------------------------------------- 识图
@@ -494,21 +504,56 @@ class FloatingService : Service() {
 
     // ---------------------------------------------------------------- 招募时间
 
+    /**
+     * 把招募时间拨到设定值。
+     *
+     * 原版是裸的 `while (读值 != 目标) { 点一下; sleep(1000) }`，靠 10 秒定时器兜底中断。
+     * 那套节奏在 AutoX 的 PaddleOCR 上够用，本工程每轮要「截图 + ML Kit 识别」，
+     * 一圈就要一两秒，10 秒只够点两三次，于是经常停在中间值。
+     *
+     * 这里改成两段式预算：
+     * * 还没读到数字时（界面没切过来），用较短的间隔快速轮询，最多等 [TIME_WAIT_TIMEOUT_MS]；
+     * * 一旦读到数字，进入调整阶段，每次点击后短暂等待再重读，最多 [TIME_ADJUST_TIMEOUT_MS]。
+     */
     private suspend fun applyRecruitTime(haveSr: Boolean) {
         val target = if (haveSr) settings.haveSrTime else settings.noneSrTime
         val screenCapture = capture ?: return
         val mapper = Geometry.Mapper(screenWidth, screenHeight)
         val tapX = mapper.timeButtonX()
         val tapY = mapper.timeButtonY()
-        val deadline = SystemClock.elapsedRealtime() + TIME_ADJUST_TIMEOUT_MS
 
-        while (SystemClock.elapsedRealtime() < deadline) {
-            val current = readRecruitTime(screenCapture, mapper)
-            if (current == target) return
-            if (current != null && VALID_TIMES.contains(current)) {
-                Clicker.tap(tapX, tapY, Clicker.DEFAULT_PRESS_MS)
+        val startedAt = SystemClock.elapsedRealtime()
+        var firstSeenAt = -1L
+
+        Log.d(TAG, "adjust recruit time start, target=$target")
+
+        while (true) {
+            val now = SystemClock.elapsedRealtime()
+            if (firstSeenAt < 0) {
+                if (now - startedAt > TIME_WAIT_TIMEOUT_MS) {
+                    Log.d(TAG, "recruit time panel never appeared, give up")
+                    return
+                }
+            } else if (now - firstSeenAt > TIME_ADJUST_TIMEOUT_MS) {
+                Log.d(TAG, "adjust recruit time timeout, target=$target")
+                return
             }
-            delay(1000L)
+
+            val current = readRecruitTime(screenCapture, mapper)
+            if (current == null) {
+                delay(TIME_RETRY_DELAY_MS)
+                continue
+            }
+
+            if (firstSeenAt < 0) firstSeenAt = SystemClock.elapsedRealtime()
+            if (current == target) {
+                Log.d(TAG, "recruit time already at $target")
+                return
+            }
+
+            Log.d(TAG, "recruit time $current -> tapping toward $target")
+            Clicker.tap(tapX, tapY, Clicker.DEFAULT_PRESS_MS)
+            delay(TIME_AFTER_TAP_DELAY_MS)
         }
     }
 
@@ -516,7 +561,7 @@ class FloatingService : Service() {
         screenCapture: ScreenCapture,
         mapper: Geometry.Mapper
     ): String? = withContext(Dispatchers.Default) {
-        val bitmap = screenCapture.capture(1_500L) ?: return@withContext null
+        val bitmap = screenCapture.capture(TIME_CAPTURE_TIMEOUT_MS) ?: return@withContext null
         try {
             val bitmapRect = mapper.toBitmapRect(mapper.timeRect(), bitmap.width, bitmap.height)
             val left = bitmapRect.left.coerceIn(0, (bitmap.width - 1).coerceAtLeast(0))
@@ -531,14 +576,11 @@ class FloatingService : Service() {
                 runCatching { crop.recycle() }
             }
 
-            val joined = blocks.joinToString(" ") { it.text }
-            var value = DIGITS_REGEX.find(joined)?.value ?: return@withContext null
-            // 原版特判：OCR 把 09 读成 60
-            if (value == "60") value = "09"
-            if (value.length == 1) value = "0$value"
-            if (!VALID_TIMES.contains(value)) return@withContext null
-            value
+            RecruitTimeParser.parse(blocks)
+        } catch (t: CancellationException) {
+            throw t
         } catch (t: Throwable) {
+            Log.w(TAG, "read recruit time failed", t)
             null
         } finally {
             runCatching { bitmap.recycle() }
@@ -642,11 +684,15 @@ class FloatingService : Service() {
 
         private const val LONG_PRESS_MS = 500L
         private const val HINT_DURATION_MS = 2_000L
-        private const val TIME_ADJUST_TIMEOUT_MS = 10_000L
         private const val FAST_MODEL_SCALE = 0.75f
 
-        private val DIGITS_REGEX = Regex("\\d{1,2}")
-        private val VALID_TIMES = (1..9).map { it.toString().padStart(2, '0') }
+        // 招募时间调节的节奏参数
+        private const val TIME_WAIT_TIMEOUT_MS = 12_000L      // 等「招募时间」界面出现
+        private const val TIME_ADJUST_TIMEOUT_MS = 20_000L    // 界面已出现后允许调整的时长
+        private const val TIME_RETRY_DELAY_MS = 300L          // 还没读到数字时的重试间隔
+        private const val TIME_AFTER_TAP_DELAY_MS = 350L      // 点一下之后等界面刷新的时间
+        private const val TIME_PICK_SETTLE_MS = 600L          // 选完词条到时间页出现的缓冲
+        private const val TIME_CAPTURE_TIMEOUT_MS = 800L      // 单次截图取帧超时
 
         @Volatile
         var instance: FloatingService? = null
