@@ -848,7 +848,7 @@ class FloatingService : Service() {
         // 招募时间调节的节奏参数
         private const val TIME_WAIT_TIMEOUT_MS = 12_000L      // 等「招募时间」界面出现
         private const val TIME_RETRY_DELAY_MS = 300L          // 还没读到数字时的重试间隔
-        private const val TIME_TAP_INTERVAL_MS = 120L         // 连续点击减号之间的间隔
+        private const val TIME_TAP_INTERVAL_MS = 250L         // 连续点击减号之间的间隔
         private const val TIME_TAPS_SETTLE_MS = 400L          // 点完一轮后等界面刷新
         private const val TIME_PICK_SETTLE_MS = 600L          // 选完词条到时间页出现的缓冲
         private const val TIME_CAPTURE_TIMEOUT_MS = 800L      // 单次截图取帧超时

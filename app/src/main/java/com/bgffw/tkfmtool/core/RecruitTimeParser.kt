@@ -3,14 +3,16 @@ package com.bgffw.tkfmtool.core
 /**
  * 从「招募时间」区域的 OCR 结果里解析出当前选中的小时数（01–09）。
  *
- * 这块不能直接「取第一个数字」：ML Kit 经常把 `09` 拆成 `0` 和 `9` 两个块，
- * 也可能把区域里的其它文字一起吐出来。原版 AutoX 用 `paddle.ocrText` 取
- * `result[0]`，在 Paddle 上刚好能用，换成 ML Kit 后就会读成 `0` 而失效。
+ * 这块很脆：ML Kit 对孤立的大号数字判定不稳，真机上出现过把 `01` 读成
+ * 字母 `IO` 的情况（`0`→`O`、`1`→`I`）。所以这里做三层处理：
  *
- * 这里的策略：
- * 1. 优先取能独立成数的块（`^[0-9]{1,2}$`），按位置从左到右、从上到下；
- * 2. 没有这样的块时，把所有文本拼起来去掉空白再找数字；
- * 3. 统一做 `60 → 09` 特判、补零、范围校验。
+ * 1. 先把易混字符折回数字（`O`→`0`、`I`→`1` …），再按纯数字块判定；
+ * 2. 折回后仍不成数，就把所有块拼起来再找；
+ * 3. 最后兜底：小时数一定是 `0X` 形式，`X` 是 1..9 里**唯一**的非零数字，
+ *    所以只要文本里恰有一个 1–9 的数字，就认定它是 `0X`。
+ *
+ * 第 3 层专门用于 `IO` 这种整体被认反的情况：折回得到 `10`，正常解析会失败，
+ * 但非零数字只有 `1`，于是正确判为 `01`。
  */
 object RecruitTimeParser {
 
@@ -20,17 +22,34 @@ object RecruitTimeParser {
     /** 合法取值：01..09。 */
     val VALID_TIMES: List<String> = (1..9).map { it.toString().padStart(2, '0') }
 
+    /** OCR 常见的「字母当数字」误认。 */
+    private val LOOK_ALIKE: Map<Char, Char> = mapOf(
+        'O' to '0', 'o' to '0', 'D' to '0', 'Q' to '0',
+        'I' to '1', 'i' to '1', 'l' to '1', 'L' to '1', '|' to '1', '!' to '1',
+        'Z' to '2', 'z' to '2',
+        'S' to '5', 's' to '5',
+        'B' to '8',
+        'g' to '9', 'q' to '9'
+    )
+
+    /** 把易混字符折回数字。 */
+    fun foldLookAlikes(text: String): String = buildString(text.length) {
+        for (ch in text) append(LOOK_ALIKE[ch] ?: ch)
+    }
+
     fun parse(blocks: List<OcrText>): String? {
         if (blocks.isEmpty()) return null
 
         val ordered = blocks.sortedWith(compareBy({ it.top }, { it.left }))
 
+        // 1) 折回后能直接成数的块
         for (block in ordered) {
-            val text = block.text.trim()
+            val text = foldLookAlikes(block.text.trim())
             if (!PURE_NUMBER.matches(text)) continue
             normalize(text)?.let { return it }
         }
 
+        // 2) 所有块拼起来再找
         val compact = buildString {
             for (block in ordered) {
                 for (ch in block.text) {
@@ -38,8 +57,17 @@ object RecruitTimeParser {
                 }
             }
         }
-        val found = ANY_NUMBER.find(compact)?.value ?: return null
-        return normalize(found)
+        val folded = foldLookAlikes(compact)
+        ANY_NUMBER.find(folded)?.value?.let { candidate ->
+            normalize(candidate)?.let { return it }
+        }
+
+        // 3) 兜底：小时是 0X，X 是唯一的非零数字
+        //    用字符个数而不是去重集合，"99" 这种必须判为无效
+        val significant = folded.filter { it in '1'..'9' }
+        if (significant.length == 1) return "0" + significant
+
+        return null
     }
 
     fun normalize(raw: String): String? {

@@ -43,6 +43,30 @@ class RecruitTimeParserTest {
     }
 
     @Test
+    fun lettersThatLookLikeDigitsAreFolded() {
+        // 真机真实案例：01 被 ML Kit 读成字母 IO
+        assertEquals("01", RecruitTimeParser.parse(listOf(block("IO"))))
+        assertEquals("08", RecruitTimeParser.parse(listOf(block("OB"))))
+        assertEquals("05", RecruitTimeParser.parse(listOf(block("OS"))))
+        assertEquals("09", RecruitTimeParser.parse(listOf(block("Og"))))
+    }
+
+    @Test
+    fun foldingHappensBeforeDirectMatch() {
+        // 折叠后才成数，走第一层
+        assertEquals("10", RecruitTimeParser.foldLookAlikes("IO"))
+        assertEquals("01", RecruitTimeParser.parse(listOf(block("O1"))))
+        assertEquals("01", RecruitTimeParser.parse(listOf(block("I0"))))
+    }
+
+    @Test
+    fun fallbackUsesTheSingleNonZeroDigit() {
+        // 折回得到 "10"，正常解析失败，但非零数字只有 1 → 判为 01
+        assertEquals("10", RecruitTimeParser.foldLookAlikes("IO"))
+        assertEquals("01", RecruitTimeParser.parse(listOf(block("IO"))))
+    }
+
+    @Test
     fun surroundingTextIsIgnored() {
         val blocks = listOf(
             block("招募时间", top = 0),
