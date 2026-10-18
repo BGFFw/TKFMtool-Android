@@ -97,8 +97,14 @@ jobs:
         run: |
           set -e
           mkdir -p build/release
+          # checkout 在 tag 事件下可能把本地 ref 建成本地轻量 tag，
+          # 读不到 annotated tag 的说明文字；这里强制拉回真正的 tag 对象。
+          git fetch --force --quiet origin \
+            "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}" || true
+          echo "tag object type: $(git cat-file -t "refs/tags/${GITHUB_REF_NAME}" 2>/dev/null || echo unknown)"
           SUMMARY="$(git for-each-ref --format='%(contents:subject)' "refs/tags/${GITHUB_REF_NAME}")"
           BODY="$(git for-each-ref --format='%(contents:body)' "refs/tags/${GITHUB_REF_NAME}")"
+          echo "tag subject: ${SUMMARY}"
           [ -n "$SUMMARY" ] || SUMMARY="Release ${GITHUB_REF_NAME}"
           SHORT_SHA="$(echo "$GITHUB_SHA" | cut -c1-7)"
           {
