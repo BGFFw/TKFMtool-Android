@@ -53,6 +53,11 @@ class SettingsRepository(context: Context) {
             sp.edit().putString(KEY_LAST_RESULT, array.toString()).apply()
         }
 
+    /** 用户点了「跳过此版本」的版本号；空串表示没有跳过任何版本。 */
+    var skippedUpdateVersion: String
+        get() = sp.getString(KEY_SKIPPED_UPDATE, "").orEmpty()
+        set(value) = sp.edit().putString(KEY_SKIPPED_UPDATE, value).apply()
+
     var corrections: List<Correction>
         get() {
             // 从没写过这个键时给出原版 run.js 里的四项默认纠正
@@ -87,6 +92,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_OCR_MODE = "Ocr_Mode"
         private const val KEY_SMART_CORRECT = "SmartCorrect"
         private const val KEY_LAST_RESULT = "last_result"
+        private const val KEY_SKIPPED_UPDATE = "skipped_update_version"
         private const val KEY_CORRECTIONS = "UserCorrectSet"
 
         private const val DEFAULT_TIME = "09"

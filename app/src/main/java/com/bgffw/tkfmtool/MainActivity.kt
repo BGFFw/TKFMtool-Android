@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.view.View
 import android.widget.TextView
 import android.widget.Toast
@@ -16,14 +17,20 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.bgffw.tkfmtool.accessibility.TkfmAccessibilityService
+import com.bgffw.tkfmtool.core.AppVersion
 import com.bgffw.tkfmtool.core.CharacterDatabase
+import com.bgffw.tkfmtool.core.SettingsRepository
+import com.bgffw.tkfmtool.core.UpdateChecker
+import com.bgffw.tkfmtool.core.UpdateInfo
 import com.bgffw.tkfmtool.service.FloatingService
 import com.bgffw.tkfmtool.ui.UserCorrectActivity
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.launch
 
 /**
- * 启动页：授权引导 + 启动/停止助手。
+ * 启动页：授权引导 + 启动/停止助手 + 检查更新。
  *
  * 原版由 AutoX.js 负责申请截图权限（`requestScreenCapture()`），
  * 原生版改成标准的 MediaProjection 授权流程；
@@ -31,6 +38,11 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
  */
 class MainActivity : AppCompatActivity() {
 
+    private companion object {
+        private const val UPDATE_TAG = "UpdateCheck"
+    }
+
+    private lateinit var settings: SettingsRepository
     private lateinit var tvOverlay: TextView
     private lateinit var tvA11y: TextView
     private lateinit var tvNotif: TextView
@@ -56,6 +68,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         CharacterDatabase.load(this)
+        settings = SettingsRepository(this)
 
         tvOverlay = findViewById(R.id.tvOverlay)
         tvA11y = findViewById(R.id.tvA11y)
@@ -73,6 +86,90 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<View>(R.id.btnCorrect).setOnClickListener {
             startActivity(Intent(this, UserCorrectActivity::class.java))
+        }
+        findViewById<View>(R.id.btnCheckUpdate).setOnClickListener { checkUpdate(manual = true) }
+
+        // 只在真正冷启动时自动查一次；从设置页返回等重建不再打扰
+        if (savedInstanceState == null) checkUpdate(manual = false)
+    }
+
+    // ---------------------------------------------------------------- 检查更新
+
+    /**
+     * @param manual 用户主动点「检查更新」：无论结果如何都给出反馈；
+     *               启动时的自动检查只在确实有新版本且未被跳过时才弹窗
+     */
+    private fun checkUpdate(manual: Boolean) {
+        if (manual) {
+            Toast.makeText(this, R.string.update_checking, Toast.LENGTH_SHORT).show()
+        }
+
+        lifecycleScope.launch {
+            val info = UpdateChecker.check().getOrNull()
+            val localVersion = BuildConfig.VERSION_NAME
+
+            if (info == null) {
+                Log.d(UPDATE_TAG, "update check failed")
+                if (manual) {
+                    Toast.makeText(this@MainActivity, R.string.update_check_failed, Toast.LENGTH_SHORT).show()
+                }
+                return@launch
+            }
+
+            if (!AppVersion.isNewer(info.version, localVersion)) {
+                Log.d(
+                    UPDATE_TAG,
+                    "no update: local=$localVersion remote=${info.version}"
+                )
+                if (manual) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.update_up_to_date, AppVersion.normalize(localVersion)),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                return@launch
+            }
+
+            Log.d(
+                UPDATE_TAG,
+                "update found: local=$localVersion remote=${info.version} " +
+                    "manual=$manual skipped=${settings.skippedUpdateVersion}"
+            )
+
+            if (!manual && !UpdateChecker.shouldPrompt(info, localVersion, settings.skippedUpdateVersion)) {
+                Log.d(UPDATE_TAG, "prompt suppressed (version skipped)")
+                return@launch
+            }
+
+            showUpdateDialog(info, localVersion)
+        }
+    }
+
+    private fun showUpdateDialog(info: UpdateInfo, localVersion: String) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(getString(R.string.update_title, info.version))
+            .setMessage(
+                getString(
+                    R.string.update_message,
+                    AppVersion.normalize(localVersion),
+                    info.version
+                )
+            )
+            .setPositiveButton(R.string.update_now) { _, _ -> openRelease(info) }
+            .setNeutralButton(R.string.update_skip_version) { _, _ ->
+                // 记下这个版本，之后启动不再为它弹窗；出更新的版本仍会提示
+                settings.skippedUpdateVersion = info.version
+            }
+            .setNegativeButton(R.string.update_later, null)
+            .show()
+    }
+
+    private fun openRelease(info: UpdateInfo) {
+        val url = info.releaseUrl.ifBlank { UpdateChecker.RELEASES_PAGE }
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        runCatching { startActivity(intent) }.onFailure {
+            Toast.makeText(this, R.string.update_open_failed, Toast.LENGTH_SHORT).show()
         }
     }
 
