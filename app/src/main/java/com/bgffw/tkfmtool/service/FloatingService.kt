@@ -681,21 +681,30 @@ class FloatingService : Service() {
             val width = bitmapRect.width.coerceAtMost(bitmap.width - left).coerceAtLeast(1)
             val height = bitmapRect.height.coerceAtMost(bitmap.height - top).coerceAtLeast(1)
 
-            val crop = Bitmap.createBitmap(bitmap, left, top, width, height)
-            dumpDebugImage(crop, "time_region.png")
-            val blocks = try {
-                ocr.recognize(crop)
+            val region = Bitmap.createBitmap(bitmap, left, top, width, height)
+            try {
+                dumpDebugImage(region, "time_region.png")
+
+                // 上下各有一个蓝色圆角箭头按钮，ML Kit 会把它们识别成 "<" 之类的
+                // 符号，把数字漏掉。所以先只把中间的数字块送去识别。
+                val digits = cropTimeDigits(region)
+                try {
+                    dumpDebugImage(digits, "time_digits.png")
+                    val blocks = ocr.recognize(digits)
+                    logTimeOcr("digits", blocks)
+                    val parsed = RecruitTimeParser.parse(blocks)
+                    if (parsed != null) return@withContext parsed
+                } finally {
+                    if (digits !== region) runCatching { digits.recycle() }
+                }
+
+                // 数字块没读出来，退回整块再试一次
+                val blocks = ocr.recognize(region)
+                logTimeOcr("region", blocks)
+                RecruitTimeParser.parse(blocks)
             } finally {
-                runCatching { crop.recycle() }
+                runCatching { region.recycle() }
             }
-
-            // 前几次把原始识别内容打出来，用于区分「没截到」和「读错格式」
-            if (timeOcrLogs < TIME_OCR_LOG_LIMIT) {
-                timeOcrLogs++
-                Log.d(TAG, "time ocr #$timeOcrLogs: " + blocks.joinToString(" | ") { it.text })
-            }
-
-            RecruitTimeParser.parse(blocks)
         } catch (t: CancellationException) {
             throw t
         } catch (t: Throwable) {
@@ -704,6 +713,29 @@ class FloatingService : Service() {
         } finally {
             runCatching { bitmap.recycle() }
         }
+    }
+
+    /**
+     * 从时间控件区域裁出中间的数字部分。
+     *
+     * 控件布局（相对整块）：上面一个「▲」圆角按钮、中间大号数字、右侧冒号、
+     * 下面一个「▼」圆角按钮。按比例取中间一块，避开上下箭头。
+     */
+    private fun cropTimeDigits(source: Bitmap): Bitmap {
+        val left = (source.width * 0.28f).roundToInt().coerceIn(0, source.width - 2)
+        val top = (source.height * 0.28f).roundToInt().coerceIn(0, source.height - 2)
+        val right = (source.width * 0.78f).roundToInt().coerceIn(left + 1, source.width)
+        val bottom = (source.height * 0.66f).roundToInt().coerceIn(top + 1, source.height)
+        return Bitmap.createBitmap(source, left, top, right - left, bottom - top)
+    }
+
+    private fun logTimeOcr(stage: String, blocks: List<OcrText>) {
+        if (timeOcrLogs >= TIME_OCR_LOG_LIMIT) return
+        timeOcrLogs++
+        Log.d(
+            TAG,
+            "time ocr #$timeOcrLogs [$stage]: " + blocks.joinToString(" | ") { it.text }
+        )
     }
 
     // ---------------------------------------------------------------- 点击
