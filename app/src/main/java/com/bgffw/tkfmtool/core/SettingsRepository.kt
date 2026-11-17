@@ -44,6 +44,16 @@ class SettingsRepository(context: Context) {
         get() = sp.getBoolean(KEY_SMART_CORRECT, true)
         set(value) = sp.edit().putBoolean(KEY_SMART_CORRECT, value).apply()
 
+    /**
+     * 启动应用时是否跳过首页、直接拉起悬浮窗（原生版新增）。
+     *
+     * 开启后冷启动会直接走「请求屏幕录制 → 起悬浮窗」这条路，
+     * 省掉「进首页 → 点启动悬浮窗」这两步。权限没给全时会自动回落到首页引导。
+     */
+    var launchDirect: Boolean
+        get() = sp.getBoolean(KEY_LAUNCH_DIRECT, false)
+        set(value) = sp.edit().putBoolean(KEY_LAUNCH_DIRECT, value).apply()
+
     /** 上一次（纠正后）的识图结果。 */
     var lastResult: List<String>
         get() = parseStringList(sp.getString(KEY_LAST_RESULT, null))
@@ -91,6 +101,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_HAVE_SR_TIME = "Have_SRtime"
         private const val KEY_OCR_MODE = "Ocr_Mode"
         private const val KEY_SMART_CORRECT = "SmartCorrect"
+        private const val KEY_LAUNCH_DIRECT = "launch_direct"
         private const val KEY_LAST_RESULT = "last_result"
         private const val KEY_SKIPPED_UPDATE = "skipped_update_version"
         private const val KEY_CORRECTIONS = "UserCorrectSet"

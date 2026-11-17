@@ -40,6 +40,7 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         private const val UPDATE_TAG = "UpdateCheck"
+        private const val DIRECT_TAG = "LaunchDirect"
     }
 
     private lateinit var settings: SettingsRepository
@@ -47,17 +48,44 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvA11y: TextView
     private lateinit var tvNotif: TextView
 
+    /**
+     * 冷启动时是否要「直接打开悬浮窗」。
+     *
+     * 录屏授权成功后据此直接关掉首页；一旦给出结果就消费掉，
+     * 避免后续正常从首页启动时被误关。
+     */
+    private var directLaunchRequested = false
+
+    /** 已经拉起过系统录屏弹窗，避免 onResume 重复触发。 */
+    private var captureRequested = false
+
     private val projectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
+        captureRequested = false
         val data: Intent? = result.data
         if (result.resultCode == Activity.RESULT_OK && data != null) {
             FloatingService.start(this, result.resultCode, data)
             Toast.makeText(this, R.string.hint_running, Toast.LENGTH_SHORT).show()
+            if (directLaunchRequested) {
+                // 直接启动模式：悬浮窗已经起来了，首页没必要再露出来
+                Log.d(DIRECT_TAG, "capture granted, start service and close home")
+                directLaunchRequested = false
+                finish()
+            } else {
+                refreshState()
+            }
         } else {
             Toast.makeText(this, R.string.hint_capture_denied, Toast.LENGTH_SHORT).show()
+            // 直接启动模式下被拒绝也不停在首页，交给用户自己决定要不要再点一次
+            if (directLaunchRequested) {
+                Log.d(DIRECT_TAG, "capture denied, close home")
+                directLaunchRequested = false
+                finish()
+            } else {
+                refreshState()
+            }
         }
-        refreshState()
     }
 
     private val notificationLauncher = registerForActivityResult(
@@ -90,7 +118,16 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnCheckUpdate).setOnClickListener { checkUpdate(manual = true) }
 
         // 只在真正冷启动时自动查一次；从设置页返回等重建不再打扰
-        if (savedInstanceState == null) checkUpdate(manual = false)
+        if (savedInstanceState == null) {
+            checkUpdate(manual = false)
+
+            // 设置里开了「启动应用时直接打开悬浮窗」就不在首页停留，
+            // 直接把录屏授权弹出来；授权通过后起悬浮窗并关掉首页。
+            if (settings.launchDirect) {
+                directLaunchRequested = true
+                tryDirectLaunch()
+            }
+        }
     }
 
     // ---------------------------------------------------------------- 检查更新
@@ -176,6 +213,17 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshState()
+
+        // 去权限设置页兜一圈回来：条件齐了就把直接启动接着走完，
+        // 用户不用回到首页再点一次「启动悬浮窗」。
+        if (directLaunchRequested &&
+            !captureRequested &&
+            !isFinishing &&
+            Settings.canDrawOverlays(this) &&
+            TkfmAccessibilityService.isRunning()
+        ) {
+            requestCapture()
+        }
     }
 
     private fun startAssistant() {
@@ -186,27 +234,71 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (!TkfmAccessibilityService.isRunning()) {
-            MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.hint_need_accessibility_title)
-                .setMessage(R.string.hint_need_accessibility_message)
-                .setPositiveButton(R.string.hint_go_settings) { _, _ -> openAccessibilitySettings() }
-                .setNegativeButton(R.string.hint_continue_anyway) { _, _ -> requestCapture() }
-                .show()
+            promptAccessibility()
             return
         }
 
         requestCapture()
     }
 
+    /**
+     * 冷启动「直接打开悬浮窗」。
+     *
+     * 三个前置条件缺一不可，任何一个不满足就先补权限，补完在 [onResume] 里接着走：
+     * * 悬浮窗权限没给 —— 按钮都挂不上，跳到授权页；
+     * * 无障碍没开 —— 能识图但点不动，问一句「去开启 / 仍然启动」；
+     * * 录屏授权 —— 只能由 Activity 发起，结果回到 [projectionLauncher]。
+     *
+     * 三者齐全时用户只会看到一次系统录屏弹窗，然后就是悬浮窗，全程不经过首页。
+     */
+    private fun tryDirectLaunch() {
+        // 悬浮窗已经在跑：不必再要一次录屏授权，直接把首页收掉
+        if (FloatingService.running) {
+            Log.d(DIRECT_TAG, "already running, close home")
+            directLaunchRequested = false
+            finish()
+            return
+        }
+
+        if (!Settings.canDrawOverlays(this)) {
+            Log.d(DIRECT_TAG, "overlay missing, fall back to home")
+            Toast.makeText(this, R.string.hint_need_overlay, Toast.LENGTH_SHORT).show()
+            openOverlaySettings()
+            return
+        }
+
+        if (!TkfmAccessibilityService.isRunning()) {
+            Log.d(DIRECT_TAG, "accessibility missing, prompt")
+            promptAccessibility()
+            return
+        }
+
+        Log.d(DIRECT_TAG, "all conditions met, requesting capture")
+        requestCapture()
+    }
+
+    private fun promptAccessibility() {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.hint_need_accessibility_title)
+            .setMessage(R.string.hint_need_accessibility_message)
+            .setPositiveButton(R.string.hint_go_settings) { _, _ -> openAccessibilitySettings() }
+            .setNegativeButton(R.string.hint_continue_anyway) { _, _ -> requestCapture() }
+            .show()
+    }
+
     private fun requestCapture() {
+        if (captureRequested) return
+
         val manager = getSystemService(MediaProjectionManager::class.java)
         if (manager == null) {
             Toast.makeText(this, R.string.toast_capture_failed, Toast.LENGTH_SHORT).show()
             return
         }
         try {
+            captureRequested = true
             projectionLauncher.launch(manager.createScreenCaptureIntent())
         } catch (t: Throwable) {
+            captureRequested = false
             Toast.makeText(this, R.string.toast_capture_failed, Toast.LENGTH_SHORT).show()
         }
     }

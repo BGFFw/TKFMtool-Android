@@ -72,6 +72,9 @@
     <string name="settings_time">招募时间设置</string>
     <string name="settings_ocr">识图模式</string>
     <string name="settings_smart_correct">词表智能纠正（把识别结果吸附到已知词条）</string>
+    <string name="settings_launch_direct">启动应用时直接打开悬浮窗（跳过首页）</string>
+    <string name="settings_launch_direct_on">开启：下次启动直接拉起悬浮窗，不再停留在首页</string>
+    <string name="settings_launch_direct_off">关闭：每次启动先进入首页，手动点「启动悬浮窗」</string>
     <string name="settings_correct">识图结果纠错</string>
     <string name="settings_last">查看上次识图结果（纠正后）</string>
     <string name="settings_about">关于本程序</string>

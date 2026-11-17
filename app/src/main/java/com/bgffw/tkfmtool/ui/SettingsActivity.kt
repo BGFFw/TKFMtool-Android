@@ -38,6 +38,7 @@ class SettingsActivity : AppCompatActivity() {
             getString(R.string.settings_time),
             getString(R.string.settings_ocr),
             getString(R.string.settings_smart_correct),
+            getString(R.string.settings_launch_direct),
             getString(R.string.settings_correct),
             getString(R.string.settings_last),
             getString(R.string.settings_about),
@@ -58,13 +59,14 @@ class SettingsActivity : AppCompatActivity() {
             2 -> showTimeMenu()
             3 -> showOcrMenu()
             4 -> showSmartCorrectMenu()
-            5 -> {
+            5 -> showLaunchDirectMenu()
+            6 -> {
                 startActivity(Intent(this, UserCorrectActivity::class.java))
                 finish()
             }
-            6 -> showLastResult()
-            7 -> showAbout()
-            8 -> exitApp()
+            7 -> showLastResult()
+            8 -> showAbout()
+            9 -> exitApp()
             else -> finish()
         }
     }
@@ -154,6 +156,29 @@ class SettingsActivity : AppCompatActivity() {
             .setTitle(R.string.settings_smart_correct)
             .setSingleChoiceItems(options, checked) { dialog, which ->
                 settings.smartCorrect = which == 0
+                dialog.dismiss()
+                finish()
+            }
+            .setOnCancelListener { finish() }
+            .show()
+    }
+
+    /**
+     * 原生版新增：启动应用时是否直接打开悬浮窗。
+     *
+     * 开着的时候冷启动会直接请求屏幕录制并拉起悬浮窗，不再停在首页，
+     * 从「点图标 → 等首页 → 点启动悬浮窗 → 同意录屏」压缩成「点图标 → 同意录屏」。
+     */
+    private fun showLaunchDirectMenu() {
+        val options = arrayOf(
+            getString(R.string.settings_launch_direct_on),
+            getString(R.string.settings_launch_direct_off)
+        )
+        val checked = if (settings.launchDirect) 0 else 1
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.settings_launch_direct)
+            .setSingleChoiceItems(options, checked) { dialog, which ->
+                settings.launchDirect = which == 0
                 dialog.dismiss()
                 finish()
             }
